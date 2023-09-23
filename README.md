@@ -1,1 +1,3 @@
-# 36-462
+This project is a kaggle class competition where students in class compete to train machine learning classification model with highest predicting accuracy of heart disease patient. Overall, my model recived a grade of 14 / 15.
+
+Our prediction model when deployed on actual test data set has an accuracy of 0.1202, and an accuracy error  of 0.0087. With a precision error of less than 1%, we believe our model has low variance. We can work on reducing our model's bias, ideally lowering our test error to less than 10%. If given more time, we can collect more data and refit our models tuning parameters, which will in theory yield a model with lower bias and variance. Another idea for improvement is experimenting with more engineered features by adding and testing interaction terms and transformations of our current features. This can also improve our model's fit.
