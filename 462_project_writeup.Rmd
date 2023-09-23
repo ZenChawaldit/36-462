@@ -1,0 +1,325 @@
+---
+title: "project_writeup"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-04-30"
+---
+```{r setup, include = FALSE}
+## By default, do not include R source code in the PDF. We do not want to see
+## code, only your text and figures.
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+###Introduction
+```{r}
+hearts = read.csv("heart_train.csv")
+library(tidyverse) #visualization
+library(ggpubr) #plot arrangement
+library(DPpack) #
+library(MASS) #QDA
+library(e1071)
+library(randomForest)
+library(xgboost)
+library(GGally)
+set.seed(100)
+```
+
+The data set for this project is a record of 735 patients with Heart Disease. Each patient is recorded with related attributes. 
+\newline
+\newline Variable description:
+\newline
+\newline Age: age of the patient [years]
+\newline Sex: sex of the patient [M: Male, F: Female]
+\newline ChestPainType: chest pain type [TA: Typical Angina, ATA: Atypical Angina, \newline NAP: Non-Anginal Pain, ASY: Asymptomatic]
+\newline RestingBP: resting blood pressure [mm Hg]
+\newline Cholesterol: serum cholesterol [mm/dl]
+\newline FastingBS: fasting blood sugar [1: if FastingBS > 120 mg/dl, 0: otherwise]
+\newline RestingECG: resting electrocardiogram results [Normal: Normal, ST: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV), LVH: showing probable or definite left ventricular hypertrophy by Estes' criteria]
+\newline MaxHR: maximum heart rate achieved [Numeric value between 60 and 202]
+\newline ExerciseAngina: exercise-induced angina [Y: Yes, N: No]
+\newline Oldpeak: oldpeak = ST [Numeric value measured in depression]
+\newline ST_Slope: the slope of the peak exercise ST segment [Up: upsloping, Flat: flat, Down: downsloping]
+\newline HeartDisease: output class [1: heart disease, 0: Normal]
+\newline
+\newline Our goal for this project is predict future patients if they have heart disease based on the patient's attributes. We will use these past patient data to train a learning model that accurately and precisely predict future cases.
+
+
+###Exploration
+The ratio of patients with heart disease and without is 396 to 339, which is a fairly balanced ratio. From the histograms, none of the univariate distribution of continuous features are not heavily skewed that needs a data transformation or heavy outliers that needed to omit. From the conditional distributions of featured given the heart disease outcome shows some interesting patterns. Current features types have higher proportions of having heart disease such being Male (62%), having asymptomatic ChestPainType (79%), having fast blood sugar (78%), having exercise Angina (83%), and having ST_Slope of downward sloping (78%) or flat (82%). This insight led us to believe that categorical variables can be quite predictive of the heart disease outcome, so we decide to perform one-hot encoding on all categorical variables.
+
+```{r, fig.cap="Continuous Predictor Univariate Distribution"}
+#summary(hearts)
+#hist of continuous vars
+par(mfrow = c(3,2))
+hist(hearts$Age)
+hist(hearts$RestingBP)
+hist(hearts$Cholesterol)
+
+hist(hearts$MaxHR)
+hist(hearts$Oldpeak)
+barplot(table(hearts$HeartDisease), main = "Heart Disease")
+```
+
+```{r, fig.cap="Binary Predictor Univariate Distribution"}
+par(mfrow = c(3,2))
+barplot(table(hearts$Sex), main = "Sex")
+barplot(table(hearts$ChestPainType), main = "ChestPainType")
+barplot(table(hearts$FastingBS), main = "FastingBS")
+barplot(table(hearts$RestingECG), main = "RestingECG")
+barplot(table(hearts$ExerciseAngina), main = "ExercisingAngina")
+barplot(table(hearts$ST_Slope), main = "ST_Slope")
+dev.off()
+```
+
+#Multivariate EDA
+
+```{r, fig.cap="Binary Predictor Conditional Distribution on Heart Disease"}
+
+hearts$y = ifelse(hearts$HeartDisease == 1, "Yes", "No")
+plot_condbar = function(x, y, lab){
+  Sex_plot = ggplot(hearts, aes(x = x, fill = y)) +
+  geom_bar(position = "fill") +
+  labs( x = lab, y = "Percent with Heart Disease") +
+  theme(legend.position = "none")
+}
+
+Sex_plot = plot_condbar(hearts$Sex, hearts$y, "Sex")
+ChestPainType_plot = plot_condbar(hearts$ChestPainType, hearts$y, "ChestPainType")
+FastingBS_plot = plot_condbar(factor(hearts$FastingBS), hearts$y, "FastingBS")
+RestingECG_plot = plot_condbar(hearts$RestingECG, hearts$y, "RestingECG")
+ExerciseAngina_plot = plot_condbar(hearts$ExerciseAngina, hearts$y, "ExerciseAngina")
+ST_Slope_plot = plot_condbar(hearts$ST_Slope, hearts$y, "ST_Slope")
+
+ggarrange(Sex_plot, ChestPainType_plot, FastingBS_plot,
+          RestingECG_plot, ExerciseAngina_plot, ST_Slope_plot,
+          ncol = 3, nrow = 2, label.y = 0)
+```
+
+
+```{r,fig.cap= "Continuous Predictor Conditional Distribution on Heart Disease"}
+par(mfrow = c(3,2))
+plot(hearts$Age, hearts$HeartDisease)
+plot(hearts$RestingBP, hearts$HeartDisease)
+plot(hearts$Cholesterol, hearts$HeartDisease)
+plot(hearts$MaxHR, hearts$HeartDisease)
+plot(hearts$Oldpeak, hearts$HeartDisease)
+```
+
+#One-hot Encoding on categorical variables
+```{r}
+hearts.encoded = hearts
+#Sex
+hearts.encoded$Is_Male = ifelse(hearts$Sex == "M", 1, 0)
+#ChestPainType
+hearts.encoded$CPT_ASY = ifelse(hearts$ChestPainType == "ASY", 1, 0)
+hearts.encoded$CPT_ATA = ifelse(hearts$ChestPainType == "ATA", 1, 0)
+hearts.encoded$CPT_NAP = ifelse(hearts$ChestPainType == "NAP", 1, 0)
+#RestingECG
+hearts.encoded$ECG_LVH = ifelse(hearts$RestingECG == "LVH", 1, 0)
+hearts.encoded$ECG_ST = ifelse(hearts$RestingECG == "ST", 1, 0)
+#ExerciseAngina
+hearts.encoded$Is_Angina = ifelse(hearts$ExerciseAngina == "Y", 1, 0)
+#ST_Slope
+hearts.encoded$ST_Slope_Flat_Up = ifelse(hearts$ST_Slope == "Up", 1, 0)
+hearts.encoded$ST_Slope_Flat_Down = ifelse(hearts$ST_Slope == "Down", 1, 0)
+```
+One-Hot Encoding Note:
+To limit degrees of freedom, k categorical variable is transformed to k-1 features
+Sex == F corresponds to Is_Male == 0
+ChestPainType == TA corresponds to CPT_ASY, CPT_ATA, CPT_NAP == (0, 0, 0)
+Resting_ECG == Normal corresponds to ECG_LVH, ECG_ST == (0, 0)
+ExerciseAngina == N corresponds to ExerciseAngina == 0
+ST_Slope == Flat corresponds to (ST_Slope_Flat_Up, ST_Slope_Flat_Down) == (0, 0)
+
+Dropping Excess Variables
+```{r}
+#Drop variables
+hearts.encoded = hearts.encoded[, -c(2,3,7,9, 11, 13)]
+```
+
+###Supervised Analysis
+
+We decided to include all features in the learning model. This is because even though a feature may have no association with our response variable, including it in our model does not significantly increase the bias into our model. For feature engineering, we simply implement one-hot encoder on all categorical variables, and manually centering and scaling all our continuous variables. After one-hot encoding, we have a total of 15 predictors. One important detail is we scale our test data set with our training data set's mean and standard deviation when evaluating our model performance with cross validation. This is because our models was trained with training data set; therefore, it should be on the same scale as our training data set. We test five learning algorithms to compare their sample expected test errors, which are logistics regression, QDA, SVM, random forest, and gradient boosting. Each of these learning models, I tune their hyper parameter with cross validation because comparing them with other learning models. For logistics and QDA regression, there is no tuning parameter. For SVM, we use gridSearch library cross-validation to select the best margin $C$, $\gamma$, and kernel for the data set. For random forest, we tested different number of trees (100 to 1000 with 100 per intervals) in a forest and evaluated their test error using 0/1 lost function. We found 500 trees per forest to have the lowest test error. Next, I use Out-of-bag error to tune the bext number of variables selected per split, find 3 variables at each split to have lowest OOB error at 0.233. For gradient boosting, we intentionally have a shallow tree depth of 8 for high computational speed, low variance, but high bias. 
+
+Once we selected models for the different algorithms, we ran a 5-fold cross validation of these five learning methods, evaluate them using cross entropy and 0/1 lost separately. In both lost functions, the random forest emerge as the best performing method with lowest cross-entropy loss function of 0.3335, and lowest accuracy rate of 0.8775. 
+
+To explain relationship between predictor and prediction, we plot the mean decrease gini score of each predictor. The higher the mean decrease gini score, the higher the importance of the variable in the model. Although one drawback of mean decrease gini score method as a measure of variable importance is it favor features with high cardinality, we engineered our features with one-hot encoding, thus eliminating this drawback. From the variable importance plot, we see ST_Slope_Flat_Up has the highest mean decrease gini score followed by MaxHR, CPT_ASY, Cholesterol, and Oldpeak. This result reinforces our earlier conditional distribution graphs that shows a high proportion (76%) of no heart disease patients for ST_Slope Up, but high proportion of heart disease patients for patients with ST_Slope Up (78%) and ST_Slope Flat (82%). 
+
+```{r}
+samp = sample(rep(1:5, length.out = nrow(hearts.encoded)), replace = FALSE)
+x_entropy = matrix(NA, nrow = 5, ncol = 5)
+accuracy = matrix(NA, nrow = 5, ncol = 5)
+colnames(x_entropy) = c("Logistics", "QDA", "SVM", 
+                      "Gradient_Boosting", "Random_Forest")
+colnames(accuracy) = c("Logistics", "QDA", "SVM", 
+                      "Gradient_Boosting", "Random_Forest")
+#k = 1
+for (k in 1:5) {
+  testd = hearts.encoded[samp == k, ]
+  traind = hearts.encoded[!(samp == k), ]
+
+  #normalization of continuous variables
+  traind.mean = colMeans(traind)
+  traind.mean = traind.mean * c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  traind.sd = apply(traind, 2, sd)
+  traind.sd = traind.sd * c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) +
+    !c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  #scale both train and test by the mean and sd of the train data
+  traind = as.data.frame(scale(traind, traind.mean,traind.sd))
+  testd = as.data.frame(scale(testd, traind.mean,traind.sd))
+  
+  ######################Logistics regression#################
+  model = glm(formula = HeartDisease ~ . , family = binomial, data = traind)
+  predictions = predict(model, testd, type ="response")
+  x_entropy[k,1] = mean(loss.cross.entropy(predictions, testd$HeartDisease))
+  accuracy[k,1] = mean(ifelse(predictions >= 0.5, 1, 0) == testd$HeartDisease)
+  
+  ########################QDA#################################
+  model = qda(HeartDisease~., data=traind)
+  predictions = predict(model,testd)$posterior[,2]
+  x_entropy[k,2] = mean(loss.cross.entropy(predictions, testd$HeartDisease))
+  accuracy[k,2] = mean(ifelse(predictions >= 0.5, 1, 0) == testd$HeartDisease)
+  
+  #########################SVM##############################
+  model.svm = svm(factor(HeartDisease) ~ ., data = traind,  kernel = "radial",
+              scale = F, probability = T)
+  pred = predict(model.svm, testd, probability = T)
+  predictions = as.numeric(attr(pred,"probabilities")[,1])
+  x_entropy[k,3] = mean(loss.cross.entropy(predictions, testd$HeartDisease))
+  accuracy[k,3] = mean(ifelse(predictions >= 0.5, 1, 0) == testd$HeartDisease)
+
+  
+  #############Gradient Boosting##############################
+  xgb_train <- xgb.DMatrix(data = as.matrix(traind[,-7]), 
+                           label = traind$HeartDisease)
+  xgb_test <- xgb.DMatrix(data = as.matrix(testd[,-7]), 
+                          label = testd$HeartDisease)
+  xgb_params <- list(
+    booster = "gbtree",
+    eta = 0.01,
+    max_depth = 8,
+    gamma = 4,
+    subsample = 0.75,
+    colsample_bytree = 1,
+    objective = "multi:softprob",
+    eval_metric = "mlogloss",
+    num_class = 2)
+  model <- xgb.train(
+    params = xgb_params,
+    data = xgb_train,
+    nrounds = 2000,
+    verbose = 1)
+  predictions = predict(model, as.matrix(testd[,-7]), strict_shape = T)[2,]
+  
+  x_entropy[k,4] = mean(loss.cross.entropy(predictions,
+                                         testd$HeartDisease))
+  accuracy[k,4] = mean(ifelse(predictions >= 0.5, 1, 0) == testd$HeartDisease) 
+  
+  #########Random Forest#########
+  model = randomForest(factor(HeartDisease) ~ . , ntree = 500, 
+                          keep.forest = T,data = traind)
+  prob = predict(model, testd,type="prob")
+  
+  prob[,2] = ifelse(prob[,2] <= 0 , 0.00000001, prob[,2])
+  predictions = ifelse(prob[,2] >= 1 , 1 - 0.00000001, prob[,2])
+  x_entropy[k,5] = mean(loss.cross.entropy(predictions, testd$HeartDisease))
+  accuracy[k,5] = mean(ifelse(predictions >= 0.5, 1, 0) == testd$HeartDisease) 
+}
+
+
+```
+
+
+```{r, fig.cap= "Cross Entropy Loss and 0/1 Accuracy"}
+#cross entropy
+colMeans(x_entropy)
+#0/1 accuracy
+colMeans(accuracy)
+```
+
+```{r}
+#predictor importance
+varImpPlot(model, main = "Predictor Importance")
+```
+ 
+
+###Analysis of results
+
+We compute the confusion matrix, sensitivity, and specificity of model, which are 84.87% and 88.01% respectively. Our model is slightly more specific than sensitive, meaning there are fewer false positive than false negative rate. From a practical point of view, this is a preferable outcome as low specificity may not be feasible for screening, since many people without the disease will screen positive, and potentially receive unnecessary diagnostic procedures.
+
+We calculate 95% pivotal confidence interval of our model sensitivity and specificity by bootstrapping samples with replacement from training data. The pivotal 95% confidence interval is (0.8222 0.8630) for sensitivity, and (0.8699 0.9051) for specificity. Overall, our model's true specificity is statistically different and higher than sensitivity, thus we can say our model does better on false positive than false negative samples.
+
+```{r, "Confusion Matrix"}
+threshold=0.5
+prediction.factor = predict(model,type="response")
+
+predicted_values<-ifelse( as.numeric(levels(prediction.factor))[prediction.factor] > threshold,1,0)
+actual_values<-model$y
+conf_matrix<-table(predicted_values,actual_values)
+#confusion matrix
+conf_matrix
+```
+
+```{r, eval = F}
+
+sensitivity = function(mat){
+  a = mat[1,1]
+  c = mat[2,1]
+  return (a/(a+c))
+}
+specificity = function(mat){
+  b = mat[1,2]
+  d = mat[2,2]
+  return (d/(b+d))
+}
+sensitivity(conf_matrix)
+specificity(conf_matrix)
+```
+
+
+```{r, eval = F}
+#bootstrap for pivotal 95% CI
+
+samp = sample(rep(1:5, length.out = nrow(hearts.encoded)), replace = FALSE)
+testd = hearts.encoded[samp == 1, ]
+traind = hearts.encoded[!(samp == 1), ]
+sensitivities = vector(mode = "numeric", 100)
+specificities = vector(mode = "numeric", 100)
+N = nrow(traind)
+B = 100
+#b = 1
+for (b in 1:B) {
+  #2.) scale
+  #normalization of continuous variables
+  boots = sample(N, N, replace = TRUE)
+  tempdata <- traind[boots, ]
+  
+  temp.mean = colMeans(tempdata)
+  temp.mean = temp.mean * c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  temp.sd = apply(tempdata, 2, sd)
+  temp.sd = temp.sd * c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) +
+    !c(1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  #scale both train and test by the mean and sd of the train data
+  
+  tempdata = as.data.frame(scale(tempdata, temp.mean, temp.sd))
+  
+  #3.) train model
+  model = randomForest(factor(HeartDisease) ~ . , ntree = 500, 
+                          keep.forest = T,data = tempdata)
+  #4.) get sensitivity and specificity
+  prediction.factor = predict(model,type="response")
+  
+  predicted_values=ifelse(as.numeric(levels(prediction.factor))[prediction.factor] > threshold,1,0)
+  actual_values<-model$y
+  conf_matrix<-table(predicted_values,actual_values)
+  #confusion matrix
+  sensitivities[b] = sensitivity(conf_matrix)
+  specificities[b] = specificity(conf_matrix)
+}
+quantile(sensitivities, c(0.025,0.95))
+quantile(specificities, c(0.025,0.95)) 
+```
+
+Our prediction model when deployed on actual test data set has an accuracy of 0.1202, and an accuracy error  of 0.0087. With a precision error of less than 1%, we believe our model has low variance. We can work on reducing our model's bias, ideally lowering our test error to less than 10%. If given more time, we can collect more data and refit our models tuning parameters, which will in theory yield a model with lower bias and variance. Another idea for improvement is experimenting with more engineered features by adding and testing interaction terms and transformations of our current features. This can also improve our model's fit.
+
